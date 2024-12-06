@@ -35,7 +35,7 @@ defmodule MyModule do
   use ExDbug, enabled: true, context: :my_feature
 
   def my_function do
-    debug("Starting my_function")
+    dbug("Starting my_function")
   end
 end
 ```

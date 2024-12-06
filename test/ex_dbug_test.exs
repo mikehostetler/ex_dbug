@@ -10,7 +10,7 @@ defmodule ExDbugTest do
     # Capture log output
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        debug("Test debug message")
+        dbug("Test debug message")
       end)
 
     # Assert that the log contains the expected message

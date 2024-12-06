@@ -54,7 +54,7 @@ defmodule ExDbug do
       quote do
         require Logger
 
-        defmacro debug(_, _ \\ [], _ \\ []), do: nil
+        defmacro dbug(_, _ \\ [], _ \\ []), do: nil
         defmacro error(_, _ \\ [], _ \\ []), do: nil
         def __debug_context__, do: nil
       end
@@ -67,7 +67,7 @@ defmodule ExDbug do
     end
   end
 
-  defmacro debug(message, metadata \\ [], opts \\ []) do
+  defmacro dbug(message, metadata \\ [], opts \\ []) do
     if Mix.env() in [:dev, :test] do
       quote bind_quoted: [message: message, metadata: metadata, opts: opts] do
         caller = ExDbug.get_caller(__ENV__)
@@ -99,7 +99,7 @@ defmodule ExDbug do
     if Mix.env() in [:dev, :test] do
       quote do
         result = unquote(value)
-        debug("Value tracked: #{unquote(name)} = #{inspect(result)}")
+        dbug("Value tracked: #{unquote(name)} = #{inspect(result)}")
         result
       end
     else
