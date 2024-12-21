@@ -2,91 +2,131 @@ defmodule ExDbugTest do
   use ExUnit.Case
   doctest ExDbug
 
+  # We only use ExDbug if :enabled => true in config (default).
+  # If you need to test compile-time disabling, set config or override in test env.
+
   # Import ExDbug for testing
-  use ExDbug
+  use ExDbug, context: :ExDbugTest
 
-  # Test the debug macro
-  test "debug macro logs messages" do
-    # Capture log output
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        dbug("Test debug message")
-      end)
+  describe "basic debugging macros" do
+    test "dbug macro logs messages" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Test debug message")
+        end)
 
-    # Assert that the log contains the expected message
-    assert log =~ "Test debug message"
-    assert log =~ "[ExDbugTest"
+      assert log =~ "Test debug message"
+      assert log =~ "[ExDbugTest]"
+    end
+
+    test "error macro logs error messages" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          error("Test error message")
+        end)
+
+      assert log =~ "Test error message"
+      assert log =~ "[ExDbugTest]"
+    end
+
+    test "track macro logs and returns the value" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          result = track(1 + 2, "addition")
+          assert result == 3
+        end)
+
+      assert log =~ "Value tracked: addition = 3"
+    end
   end
 
-  # Test the error macro
-  test "error macro logs error messages" do
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        error("Test error message")
-      end)
+  describe "configuration and compile-time checks" do
+    test "configuration options are applied" do
+      assert ExDbug.get_debug_enabled([]) == true
 
-    assert log =~ "Test error message"
-    assert log =~ "[ExDbugTest"
+      options = ExDbug.merge_options([])
+      assert Keyword.get(options, :max_depth) == 3
+      assert Keyword.get(options, :include_timing) == true
+      assert Keyword.get(options, :include_stack) == true
+    end
   end
 
-  # Test the track macro
-  test "track macro logs and returns the value" do
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        result = track(1 + 2, "addition")
-        assert result == 3
-      end)
-
-    assert log =~ "Value tracked: addition = 3"
+  describe "caller information and formatting" do
+    test "format_output/2 formats message correctly with string context" do
+      formatted = ExDbug.format_output("Test message", "MyContext")
+      assert formatted == "[MyContext] Test message"
+    end
   end
 
-  # Test configuration options
-  test "configuration options are applied" do
-    # This test assumes that the default configuration is used
-    # You may need to adjust this based on your actual configuration
-    assert ExDbug.get_debug_enabled([]) == true
+  describe "log function and environment variable filtering" do
+    setup do
+      # We'll reset the DEBUG environment variable after each test
+      original_debug = System.get_env("DEBUG")
+      on_exit(fn -> System.put_env("DEBUG", original_debug || "") end)
+      :ok
+    end
 
-    options = ExDbug.merge_options([])
-    assert Keyword.get(options, :max_depth) == 3
-    assert Keyword.get(options, :include_timing) == true
-    assert Keyword.get(options, :include_stack) == true
-  end
+    test "logs message when level is allowed and no DEBUG filtering set" do
+      # means no patterns set
+      System.put_env("DEBUG", "")
 
-  # Test caller information
-  test "get_caller returns correct information" do
-    caller = ExDbug.get_caller(__ENV__)
-    assert length(caller) == 2
-    assert List.first(caller) == "ExDbugTest"
-    assert is_binary(List.last(caller))
-  end
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ExDbug.log(:debug, "Unfiltered log", [levels: [:debug]], "SomeModule")
+        end)
 
-  # Test output formatting
-  test "format_output formats message correctly" do
-    formatted = ExDbug.format_output("Test message", ["Module", "function"])
-    assert formatted == "[Module.function] Test message"
-  end
+      assert log =~ "Unfiltered log"
+    end
 
-  # Test logging behavior
-  test "log function respects configuration" do
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        ExDbug.log(:debug, "Test log message", levels: [:debug], env: [:test])
-      end)
+    test "does not log if level not in allowed levels" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ExDbug.log(:debug, "Should not log", [levels: [:error]], "SomeModule")
+        end)
 
-    assert log =~ "Test log message"
+      assert log == ""
+    end
 
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        ExDbug.log(:error, "Test error message", levels: [:error], env: [:test])
-      end)
+    test "logs only included pattern if DEBUG is set" do
+      # Only the 'myapp:*' context is included
+      System.put_env("DEBUG", "myapp:*")
 
-    assert log =~ "Test error message"
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ExDbug.log(:debug, "Should appear", [levels: [:debug]], "myapp:db")
+          ExDbug.log(:debug, "Should not appear", [levels: [:debug]], "otherapp:db")
+        end)
 
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        ExDbug.log(:debug, "Should not log", levels: [:error], env: [:test])
-      end)
+      assert log =~ "Should appear"
+      refute log =~ "Should not appear"
+    end
 
-    assert log == ""
+    test "respects excluded patterns with '-' prefix" do
+      System.put_env("DEBUG", "*,-myapp:secret")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ExDbug.log(:debug, "Allowed log", [levels: [:debug]], "myapp:public")
+          ExDbug.log(:debug, "Excluded log", [levels: [:debug]], "myapp:secret")
+        end)
+
+      assert log =~ "Allowed log"
+      refute log =~ "Excluded log"
+    end
+
+    test "wildcard matching works as expected" do
+      System.put_env("DEBUG", "payment:*")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ExDbug.log(:debug, "Pay init", [levels: [:debug]], "payment:init")
+          ExDbug.log(:debug, "Pay proc", [levels: [:debug]], "payment:processing")
+          ExDbug.log(:debug, "Unrelated", [levels: [:debug]], "other:stuff")
+        end)
+
+      assert log =~ "Pay init"
+      assert log =~ "Pay proc"
+      refute log =~ "Unrelated"
+    end
   end
 end

@@ -1,18 +1,19 @@
 # ExDbug
 
-ExDbug is an debug utility for Elixir applications, providing enhanced debugging and analysis capabilities.
+A lightweight, namespace-based debugging utility for Elixir, inspired by Node.js's "debug" library. ExDbug enables contextual logging with zero production overhead and runtime-configurable output.
 
 ## Features
 
-- Automatic value tracking across function calls
-- Performance timing information
-- Stack trace integration
-- Context preservation
+- Toggle debug output dynamically via environment variables
+- Zero overhead in production builds through compile-time optimization
+- Namespace-based log filtering with wildcard support 
+- Rich contextual debugging messages
+- Seamless value tracking across function chains
+- Designed for both human debugging and LLM-assisted development
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ex_dbug` to your list of dependencies in `mix.exs`:
+Add `ex_dbug` to your dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -22,28 +23,90 @@ def deps do
 end
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/ex_dbug>.
+Then run:
+
+```bash
+mix deps.get
+```
+
+## Configuration
+
+### Compile-time Settings
+
+Configure ExDbug in your `config.exs` (or environment-specific config):
+
+```elixir
+config :ex_dbug,
+  enabled: true  # Set to false to compile out debug statements
+```
+
+### Runtime Control
+
+Control debug output using the `DEBUG` environment variable:
+
+```bash
+# Enable all debug output
+DEBUG="*" mix run
+
+# Enable specific namespace
+DEBUG="myapp:specific" mix run
+
+# Enable all except specific namespace
+DEBUG="*,-myapp:secret" mix run
+```
+
+Pattern syntax:
+- `*` - Enable all namespaces
+- `myapp:*` - Enable all namespaces starting with `myapp:`
+- `*,-myapp:db` - Enable all except `myapp:db`
+- Multiple patterns can use commas or spaces as separators
 
 ## Usage
 
-Include the `ExDbug` module in your module and configure it with the desired options.
+### Basic Debugging
 
 ```elixir
 defmodule MyModule do
-  use ExDbug, enabled: true, context: :my_feature
+  use ExDbug, context: :my_namespace
 
   def my_function do
     dbug("Starting my_function")
+    # Your code here
+    error("An error occurred")  # Logs error-level message
   end
 end
 ```
 
-To turn off debugging for a specific module, you can set `enabled: false` in the configuration.
+### Value Tracking
 
 ```elixir
-defmodule MyModule do
-  use ExDbug, enabled: false
+defmodule MyCalculations do
+  use ExDbug, context: :my_calculations
+
+  def compute do
+    track(1 + 2, "sum_of_1_and_2")  # Logs and returns the computed value
+  end
 end
 ```
+
+## LLM-Assisted Development
+
+ExDbug enhances AI-assisted development by providing detailed execution traces that help language models:
+
+- Understand complex call paths
+- Debug concurrent operations
+- Generate accurate Elixir code
+- Analyze runtime behavior
+
+The detailed logs and namespace organization make it easier for AI tools to interpret program flow and state changes.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for your changes
+4. Submit a pull request
+
+## License
+
+Released under the MIT License. See [LICENSE](LICENSE) for details.
