@@ -1,112 +1,186 @@
 # ExDbug
 
-A lightweight, namespace-based debugging utility for Elixir, inspired by Node.js's "debug" library. ExDbug enables contextual logging with zero production overhead and runtime-configurable output.
+[![Hex.pm](https://img.shields.io/hexpm/v/ex_dbug.svg)](https://hex.pm/packages/ex_dbug)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/ex_dbug)
+
+Debug utility for Elixir applications, inspired by the Node.js 'debug' package. 
+Provides namespace-based filtering, rich metadata support, and compile-time optimization.
 
 ## Features
 
-- Toggle debug output dynamically via environment variables
-- Zero overhead in production builds through compile-time optimization
-- Namespace-based log filtering with wildcard support 
-- Rich contextual debugging messages
-- Seamless value tracking across function chains
-- Designed for both human debugging and LLM-assisted development
+* 🔍 Namespace-based debug output filtering
+* 📊 Rich metadata support with customizable formatting
+* ⚡ Zero runtime cost when disabled (compile-time optimization)
+* 🌍 Environment variable-based filtering
+* 📝 Automatic metadata truncation for large values
+* 🔧 Configurable debug levels and context-based filtering
+* 📈 Value tracking through pipelines
+* ⏱️ Optional timing and stack trace information
 
 ## Installation
 
-Add `ex_dbug` to your dependencies in `mix.exs`:
+Add `ex_dbug` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:ex_dbug, "~> 0.1.0"}
+    {:ex_dbug, "~> 1.0"}
   ]
 end
 ```
 
-Then run:
+## Basic Usage
 
-```bash
-mix deps.get
+Add `use ExDbug` to your module and use the `dbug/1,2,3` or `error/1,2,3` macros:
+
+```elixir
+defmodule MyApp.Worker do
+  use ExDbug, context: :worker
+
+  def process(data) do
+    dbug("Processing data", size: byte_size(data))
+    # ... processing logic
+    dbug("Completed processing", status: :ok)
+  end
+end
 ```
 
 ## Configuration
 
-### Compile-time Settings
+### Compile-Time Configuration
 
-Configure ExDbug in your `config.exs` (or environment-specific config):
+In your `config.exs`:
 
 ```elixir
 config :ex_dbug,
-  enabled: true  # Set to false to compile out debug statements
+  enabled: true,  # Set to false to compile out all debug calls
+  config: [      # Default options for all ExDbug uses
+    max_length: 500,
+    truncate_threshold: 100,
+    include_timing: true,
+    include_stack: true,
+    max_depth: 3,
+    levels: [:debug, :error]
+  ]
 ```
 
-### Runtime Control
+### Runtime Configuration
 
-Control debug output using the `DEBUG` environment variable:
+Set the `DEBUG` environment variable to control which namespaces are logged:
 
 ```bash
 # Enable all debug output
 DEBUG="*" mix run
 
 # Enable specific namespace
-DEBUG="myapp:specific" mix run
+DEBUG="myapp:worker" mix run
+
+# Enable multiple patterns
+DEBUG="myapp:*,other:thing" mix run
 
 # Enable all except specific namespace
 DEBUG="*,-myapp:secret" mix run
 ```
 
-Pattern syntax:
-- `*` - Enable all namespaces
-- `myapp:*` - Enable all namespaces starting with `myapp:`
-- `*,-myapp:db` - Enable all except `myapp:db`
-- Multiple patterns can use commas or spaces as separators
+## Advanced Usage
 
-## Usage
+### Metadata Support
 
-### Basic Debugging
+All debug macros accept metadata as keyword lists:
 
 ```elixir
-defmodule MyModule do
-  use ExDbug, context: :my_namespace
+dbug("User login", 
+  user_id: 123,
+  ip: "192.168.1.1",
+  timestamp: DateTime.utc_now()
+)
+```
 
-  def my_function do
-    dbug("Starting my_function")
-    # Your code here
-    error("An error occurred")  # Logs error-level message
-  end
-end
+Long metadata values are automatically truncated based on configuration:
+```elixir
+# With default config (truncate_threshold: 100, max_length: 500)
+dbug("Big data", data: String.duplicate("x", 1000))
+# Output: [context] Big data data: "xxxxx... (truncated)"
 ```
 
 ### Value Tracking
 
-```elixir
-defmodule MyCalculations do
-  use ExDbug, context: :my_calculations
+Debug values in pipelines without breaking the flow:
 
-  def compute do
-    track(1 + 2, "sum_of_1_and_2")  # Logs and returns the computed value
-  end
+```elixir
+def process_payment(amount) do
+  amount
+  |> track("initial_amount")
+  |> apply_fees()
+  |> track("with_fees")
+  |> complete_transaction()
 end
 ```
 
-## LLM-Assisted Development
+### Module Configuration
 
-ExDbug enhances AI-assisted development by providing detailed execution traces that help language models:
+Configure ExDbug behavior per module:
 
-- Understand complex call paths
-- Debug concurrent operations
-- Generate accurate Elixir code
-- Analyze runtime behavior
+```elixir
+use ExDbug,
+  context: :payment_processor,
+  max_length: 1000,
+  truncate_threshold: 200,
+  include_timing: true,
+  include_stack: false,
+  levels: [:debug, :error]
+```
 
-The detailed logs and namespace organization make it easier for AI tools to interpret program flow and state changes.
+### Debug Levels
+
+Control which log levels are enabled:
+
+```elixir
+# Only show error messages
+use ExDbug,
+  context: :critical_system,
+  levels: [:error]
+
+# Later in code
+error("Critical failure", error: err)  # This shows
+dbug("Processing")                     # This doesn't
+```
+
+## Output Format
+
+Debug messages follow this format:
+```
+[Context] Message key1: value1, key2: value2
+```
+
+Examples:
+```
+[payment] Processing payment amount: 100, currency: "USD"
+[worker] Job completed status: :ok, duration_ms: 1500
+```
+
+## Best Practices
+
+1. Use descriptive context names matching your application structure
+2. Include relevant metadata for better debugging context
+3. Set appropriate DEBUG patterns for different environments
+4. Disable in production for zero overhead
+5. Use `track/2` for debugging pipeline transformations
+
+## Production Use
+
+While ExDbug has minimal overhead when disabled, it's recommended to set 
+`config :ex_dbug, enabled: false` in production unless debugging is specifically 
+needed. This ensures zero runtime cost as debug calls are compiled out completely.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for your changes
-4. Submit a pull request
+1. Fork it
+2. Create your feature branch (`git checkout -b my-new-feature`)
+3. Commit your changes (`git commit -am 'Add some feature'`)
+4. Push to the branch (`git push origin my-new-feature`)
+5. Create new Pull Request
 
 ## License
 
-Released under the MIT License. See [LICENSE](LICENSE) for details.
+MIT License - see LICENSE.md for details.

@@ -7,6 +7,7 @@ defmodule ExDbugTest do
 
   # Import ExDbug for testing
   use ExDbug, context: :ExDbugTest
+  @moduletag :capture_log
 
   describe "basic debugging macros" do
     test "dbug macro logs messages" do
@@ -127,6 +128,43 @@ defmodule ExDbugTest do
       assert log =~ "Pay init"
       assert log =~ "Pay proc"
       refute log =~ "Unrelated"
+    end
+  end
+
+  describe "metadata handling" do
+    test "dbug macro logs messages with metadata" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Test debug message", key: "value", number: 42)
+        end)
+
+      assert log =~ "Test debug message"
+      assert log =~ "[ExDbugTest]"
+      assert log =~ ~r/key: "value"/
+      assert log =~ "number: 42"
+    end
+
+    test "handles long metadata values with truncation" do
+      long_string = String.duplicate("a", 200)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Long value test", long_value: long_string)
+        end)
+
+      assert log =~ "Long value test"
+      assert log =~ "... (truncated)"
+    end
+
+    test "formats empty metadata correctly" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("No metadata message", [])
+        end)
+
+      assert log =~ "[ExDbugTest] No metadata message"
+      # Make sure there's no metadata formatting (key: value) in the message
+      refute log =~ ~r/\[ExDbugTest\].*:/
     end
   end
 end

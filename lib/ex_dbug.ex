@@ -1,56 +1,9 @@
 defmodule ExDbug do
-  @moduledoc """
-  Advanced debug utility for debugging and analysis, inspired by the Node.js 'debug' package.
-
-  ## Usage
-
-  Add `use ExDbug, context: :my_namespace` to a module, and use `dbug/1` or `error/1` to log debug or error messages.
-
-  Debug output is controlled by:
-    - The `:enabled` config key for `:ex_dbug` (compile-time)
-    - The `DEBUG` environment variable (runtime), which determines which namespaces are displayed
-
-  ### Enabling/Disabling at Compile Time
-
-  In your `config.exs`:
-  ```elixir
-  config :ex_dbug, enabled: true
-  ```
-  If `enabled: false`, calls to `dbug` and `error` are compiled out (no runtime overhead).
-
-  ### Using DEBUG Environment Variable
-
-  Set `DEBUG` to enable certain namespaces:
-    - `DEBUG="*"` enables all namespaces
-    - `DEBUG="myapp:*"` enables all namespaces starting with myapp:
-    - `DEBUG="*,-myapp:db"` enables all but myapp:db
-
-  You can separate multiple patterns with commas. A leading `-` excludes a pattern.
-
-  Example:
-  ```bash
-  DEBUG="myapp:*" mix run
-  ```
-
-  ### Example
-  ```elixir
-  defmodule MyModule do
-    use ExDbug, context: :my_feature
-
-    def run do
-      dbug("Starting run")
-      :ok
-    end
-  end
-  ```
-  If `DEBUG="my_feature"`, calling `MyModule.run()` will log the debug message.
-
-  ## Features
-    - Namespace-based enabling/disabling of debug output
-    - Compile-time toggle to remove debug calls entirely
-    - Stack trace or timing info can be integrated if desired
-    - Works similar to the Node.js 'debug' library
-  """
+  @external_resource "README.md"
+  @moduledoc File.read!("README.md")
+             |> String.split("## Contributing")
+             |> List.first()
+             |> String.trim()
 
   require Logger
 
@@ -59,7 +12,9 @@ defmodule ExDbug do
           context: atom() | String.t(),
           max_depth: non_neg_integer(),
           include_timing: boolean(),
-          include_stack: boolean()
+          include_stack: boolean(),
+          max_length: non_neg_integer(),
+          truncate_threshold: non_neg_integer()
         ]
 
   defmacro __using__(opts \\ []) do
@@ -77,7 +32,6 @@ defmodule ExDbug do
         @before_compile ExDbug
       end
     else
-      # If not enabled, we compile out the macros to no-ops
       quote do
         require Logger
         defmacro dbug(_, _ \\ [], _ \\ []), do: nil
@@ -94,17 +48,16 @@ defmodule ExDbug do
   end
 
   defmacro dbug(message, metadata \\ [], opts \\ []) do
-    # dbug calls are only compiled if enabled is true
     quote bind_quoted: [message: message, metadata: metadata, opts: opts] do
       context = __debug_context__()
-      ExDbug.log(:debug, message, @debug_opts, context)
+      ExDbug.log(:debug, message, metadata, Map.new(@debug_opts))
     end
   end
 
   defmacro error(message, metadata \\ [], opts \\ []) do
     quote bind_quoted: [message: message, metadata: metadata, opts: opts] do
       context = __debug_context__()
-      ExDbug.log(:error, message, @debug_opts, context)
+      ExDbug.log(:error, message, metadata, Map.new(@debug_opts))
     end
   end
 
@@ -116,44 +69,47 @@ defmodule ExDbug do
     end
   end
 
-  @doc """
-  Check if debug is enabled based on application config.
-  """
+  @doc false
   def get_debug_enabled(opts) do
     env_enabled = Application.get_env(:ex_dbug, :enabled, true)
     Keyword.get(opts, :enabled, env_enabled)
   end
 
-  @doc """
-  Merge options from app config, defaults, and module opts.
-  """
+  @doc false
   def merge_options(opts) do
     defaults = [
       max_depth: 3,
       include_timing: true,
-      include_stack: true
+      include_stack: true,
+      max_length: 500,
+      truncate_threshold: 100,
+      levels: [:debug, :error]
     ]
 
-    app_config = Application.get_all_env(:ex_dbug)
+    app_config = Application.get_env(:ex_dbug, :config, [])
     Keyword.merge(defaults, app_config) |> Keyword.merge(opts)
   end
 
-  @doc """
-  Format output by prefixing with [Namespace].
-  """
-  def format_output(message, context) when is_binary(context) do
-    "[#{context}] #{message}"
+  @doc false
+  def format_output(message, context) do
+    format_output(message, context, [])
   end
 
-  @doc """
-  Logging logic:
-  We determine if we should log by checking:
-  1. If the level is allowed
-  2. If the context matches DEBUG patterns
-  """
-  def log(level, message, opts, context) when level in [:debug, :error] do
-    if should_log?(level, opts, context) do
-      formatted = format_output(message, context)
+  @doc false
+  def format_output(message, context, metadata, opts \\ %{}) do
+    formatted_metadata = format_metadata(metadata, opts)
+    base = "[#{context}] #{message}"
+
+    if formatted_metadata != "", do: "#{base} #{formatted_metadata}", else: base
+  end
+
+  @doc false
+  def log(level, message, metadata, context)
+      when level in [:debug, :error] and (is_binary(context) or is_atom(context)) do
+    context_str = to_string(context)
+
+    if should_log?(level, metadata, context_str) do
+      formatted = format_output(message, context_str, metadata)
 
       case level do
         :debug -> Logger.debug(formatted)
@@ -163,40 +119,34 @@ defmodule ExDbug do
   end
 
   @doc false
-  def should_log?(level, opts, context) do
-    debug_levels = opts[:levels] || [:debug, :error]
+  def log(level, message, metadata, opts) when level in [:debug, :error] and is_map(opts) do
+    context = Map.get(opts, :context) || "unknown"
+    log(level, message, metadata, context)
+  end
+
+  @doc false
+  defp should_log?(level, metadata, context) do
+    debug_levels = Keyword.get(metadata, :levels, [:debug, :error])
     level_allowed = level in debug_levels
     pattern_match = namespace_enabled?(context)
 
     level_allowed and pattern_match
   end
 
-  @doc """
-  Check if a given namespace (context) is enabled by the DEBUG environment variable.
-  If DEBUG is unset or empty, default to enabling everything if :enabled is true,
-  otherwise no logging.
-  """
-  def namespace_enabled?(context) do
+  @doc false
+  defp namespace_enabled?(context) do
     patterns = parse_debug_env()
     matches_namespace?(context, patterns)
   end
 
-  @doc """
-  Parse the DEBUG environment variable for enable/disable patterns.
-
-  Returns a tuple {includes, excludes}, where includes and excludes are lists of patterns.
-  A pattern can have wildcards (*).
-  """
-  def parse_debug_env do
+  @doc false
+  defp parse_debug_env do
     debug_val = System.get_env("DEBUG", "")
-    # Cache parsed patterns in ETS or application env if desired for performance.
-    # For simplicity, parse each time. For efficiency, we could memoize.
     parse_patterns(debug_val)
   end
 
   @doc false
-  def parse_patterns(string) when is_binary(string) do
-    # Patterns separated by comma or space
+  defp parse_patterns(string) when is_binary(string) do
     raw = String.split(string, [",", " "], trim: true)
 
     {includes, excludes} =
@@ -208,11 +158,9 @@ defmodule ExDbug do
             {inc, exc}
 
           String.starts_with?(pattern, "-") ->
-            # excluded pattern
             {inc, [String.trim_leading(pattern, "-") | exc]}
 
           true ->
-            # included pattern
             {[pattern | inc], exc}
         end
       end)
@@ -220,19 +168,12 @@ defmodule ExDbug do
     {Enum.reverse(includes), Enum.reverse(excludes)}
   end
 
-  @doc """
-  Check if a namespace matches any of the included patterns and is not excluded.
-  If no patterns are set, default to enable if the library is enabled.
-  """
-  def matches_namespace?(namespace, {includes, excludes}) do
-    # If DEBUG is empty (no includes and no excludes), default is to match all if enabled
+  @doc false
+  defp matches_namespace?(namespace, {includes, excludes}) do
     cond do
       includes == [] and excludes == [] ->
-        # If user hasn't set DEBUG, we either show all or none depending on config
-        # We'll assume showing all is fine if :enabled is true
         true
 
-      # If includes are specified, namespace must match at least one
       true ->
         included = includes == [] or Enum.any?(includes, &wildcard_match?(namespace, &1))
         excluded = Enum.any?(excludes, &wildcard_match?(namespace, &1))
@@ -240,19 +181,43 @@ defmodule ExDbug do
     end
   end
 
-  @doc """
-  Perform a simple wildcard match.
-
-  * matches any sequence of characters.
-  """
-  def wildcard_match?(string, pattern) do
-    # Convert pattern into a regex, replacing * with .*
-    # Escape regex metacharacters in pattern except for *
+  @doc false
+  defp wildcard_match?(string, pattern) do
     regex_pattern =
       pattern
       |> Regex.escape()
       |> String.replace("\\*", ".*")
 
     Regex.match?(Regex.compile!("^" <> regex_pattern <> "$"), string)
+  end
+
+  # Private helper functions for metadata formatting
+  defp format_metadata(metadata, opts) when is_list(metadata) do
+    max_length = Map.get(opts, :max_length, 500)
+    truncate_threshold = Map.get(opts, :truncate_threshold, 100)
+
+    case metadata do
+      [] ->
+        ""
+
+      _ ->
+        Enum.map_join(metadata, ", ", fn {key, value} ->
+          formatted_value = format_value(value, max_length, truncate_threshold)
+          "#{key}: #{formatted_value}"
+        end)
+    end
+  end
+
+  defp format_metadata(_, _), do: ""
+
+  defp format_value(value, max_length, truncate_threshold) do
+    formatted = inspect(value, limit: :infinity, pretty: false)
+
+    if String.length(formatted) > truncate_threshold do
+      truncated = String.slice(formatted, 0, max_length)
+      "#{truncated}... (truncated)"
+    else
+      formatted
+    end
   end
 end

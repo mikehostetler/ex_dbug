@@ -1,7 +1,7 @@
 defmodule ExDbug.MixProject do
   use Mix.Project
 
-  @version "1.0.0"
+  @version "1.1.0"
 
   def project do
     [
@@ -13,7 +13,7 @@ defmodule ExDbug.MixProject do
 
       # Docs
       name: "ExDbug",
-      description: "Advanced debug utility for Elixir, inspired by Node.js debug package",
+      description: "Debug utility for Elixir, inspired by Node.js debug package",
       source_url: "https://github.com/mikehostetler/ex_dbug",
       homepage_url: "https://github.com/mikehostetler/ex_dbug",
       package: package(),
