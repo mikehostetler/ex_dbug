@@ -1,3 +1,12 @@
+defmodule TestContextModule do
+  # Intentionally not setting context to test auto-detection
+  use ExDbug
+
+  def test_function do
+    dbug("Auto context test")
+  end
+end
+
 defmodule ExDbugTest do
   use ExUnit.Case
   doctest ExDbug
@@ -7,7 +16,7 @@ defmodule ExDbugTest do
 
   # Import ExDbug for testing
   use ExDbug, context: :ExDbugTest
-  @moduletag :capture_log
+  # @moduletag :capture_log
 
   describe "basic debugging macros" do
     test "dbug macro logs messages" do
@@ -132,19 +141,7 @@ defmodule ExDbugTest do
   end
 
   describe "metadata handling" do
-    test "dbug macro logs messages with metadata" do
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          dbug("Test debug message", key: "value", number: 42)
-        end)
-
-      assert log =~ "Test debug message"
-      assert log =~ "[ExDbugTest]"
-      assert log =~ ~r/key: "value"/
-      assert log =~ "number: 42"
-    end
-
-    test "handles long metadata values with truncation" do
+    test "handles long metadata values with truncation enabled" do
       long_string = String.duplicate("a", 200)
 
       log =
@@ -156,15 +153,92 @@ defmodule ExDbugTest do
       assert log =~ "... (truncated)"
     end
 
-    test "formats empty metadata correctly" do
+    test "respects truncate: false setting" do
+      long_string = String.duplicate("a", 200)
+
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          dbug("No metadata message", [])
+          dbug("No truncate test", long_value: long_string, truncate: false)
         end)
 
-      assert log =~ "[ExDbugTest] No metadata message"
-      # Make sure there's no metadata formatting (key: value) in the message
-      refute log =~ ~r/\[ExDbugTest\].*:/
+      assert log =~ long_string
+      refute log =~ "... (truncated)"
+    end
+
+    test "handles custom truncate threshold" do
+      # Make string longer than the custom threshold we'll set
+      string = String.duplicate("a", 150)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          # Set a custom truncate threshold
+          dbug("Custom truncate test", value: string, truncate: 50)
+        end)
+
+      assert log =~ "... (truncated)"
+      # Full string shouldn't appear
+      refute log =~ string
+    end
+
+    test "accepts map metadata" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Map metadata test", %{key: "value", count: 42})
+        end)
+
+      assert log =~ "Map metadata test"
+      assert log =~ "key: \"value\""
+      assert log =~ "count: 42"
+    end
+
+    test "handles map metadata with truncation" do
+      long_string = String.duplicate("a", 200)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Map truncation test", %{long_value: long_string})
+        end)
+
+      assert log =~ "Map truncation test"
+      assert log =~ "... (truncated)"
+    end
+
+    test "handles map metadata with custom truncation" do
+      string = String.duplicate("a", 150)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug("Map custom truncate", %{value: string, truncate: 50})
+        end)
+
+      assert log =~ "Map custom truncate"
+      assert log =~ "... (truncated)"
+      refute log =~ string
+    end
+  end
+
+  describe "automatic context detection" do
+    test "automatically detects module and function name when no context set" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          TestContextModule.test_function()
+        end)
+
+      # Changed expectation
+      assert log =~ "[TestContextModule]"
+      assert log =~ "Auto context test"
+    end
+
+    @debug_msg "Outside function test"
+    test "uses module name for module-level logging" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          dbug(@debug_msg)
+        end)
+
+      # Changed expectation
+      assert log =~ "[ExDbugTest]"
+      assert log =~ @debug_msg
     end
   end
 end

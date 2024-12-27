@@ -13,8 +13,7 @@ defmodule ExDbug do
           max_depth: non_neg_integer(),
           include_timing: boolean(),
           include_stack: boolean(),
-          max_length: non_neg_integer(),
-          truncate_threshold: non_neg_integer()
+          truncate: boolean() | non_neg_integer()
         ]
 
   defmacro __using__(opts \\ []) do
@@ -29,14 +28,16 @@ defmodule ExDbug do
         @debug_opts ExDbug.merge_options(unquote(opts))
         @context Keyword.get(unquote(opts), :context, __MODULE__) |> to_string()
 
+        Process.put(:ex_dbug_opts, @debug_opts)
+
         @before_compile ExDbug
       end
     else
       quote do
         require Logger
-        defmacro dbug(_, _ \\ [], _ \\ []), do: nil
-        defmacro error(_, _ \\ [], _ \\ []), do: nil
-        def __debug_context__, do: nil
+        defmacro dbug(_, _ \\ []), do: nil
+        defmacro error(_, _ \\ []), do: nil
+        # def __debug_context__, do: nil
       end
     end
   end
@@ -47,17 +48,29 @@ defmodule ExDbug do
     end
   end
 
-  defmacro dbug(message, metadata \\ [], opts \\ []) do
-    quote bind_quoted: [message: message, metadata: metadata, opts: opts] do
-      context = __debug_context__()
-      ExDbug.log(:debug, message, metadata, Map.new(@debug_opts))
+  defmacro dbug(message, metadata \\ []) do
+    caller_context = compute_caller_context(__CALLER__)
+
+    quote bind_quoted: [
+            message: message,
+            metadata: metadata,
+            caller_context: caller_context
+          ] do
+      context = __debug_context__() || caller_context
+      ExDbug.log(:debug, message, metadata, context)
     end
   end
 
-  defmacro error(message, metadata \\ [], opts \\ []) do
-    quote bind_quoted: [message: message, metadata: metadata, opts: opts] do
-      context = __debug_context__()
-      ExDbug.log(:error, message, metadata, Map.new(@debug_opts))
+  defmacro error(message, metadata \\ []) do
+    caller_context = compute_caller_context(__CALLER__)
+
+    quote bind_quoted: [
+            message: message,
+            metadata: metadata,
+            caller_context: caller_context
+          ] do
+      context = __debug_context__() || caller_context
+      ExDbug.log(:error, message, metadata, context)
     end
   end
 
@@ -81,24 +94,43 @@ defmodule ExDbug do
       max_depth: 3,
       include_timing: true,
       include_stack: true,
-      max_length: 500,
-      truncate_threshold: 100,
+      truncate: 100,
       levels: [:debug, :error]
     ]
 
     app_config = Application.get_env(:ex_dbug, :config, [])
-    Keyword.merge(defaults, app_config) |> Keyword.merge(opts)
+    merged = Keyword.merge(defaults, app_config) |> Keyword.merge(opts)
+
+    truncate =
+      cond do
+        Keyword.has_key?(merged, :truncate_threshold) ->
+          Keyword.get(merged, :truncate_threshold)
+
+        true ->
+          Keyword.get(merged, :truncate)
+      end
+
+    Keyword.put(merged, :truncate, truncate)
   end
 
   @doc false
-  def format_output(message, context) do
-    format_output(message, context, [])
+  def format_output(message, context) when is_binary(context) or is_atom(context) do
+    context_str =
+      context
+      |> to_string()
+      |> String.replace(~r/^Elixir\./, "")
+
+    "[#{context_str}] #{message}"
   end
 
-  @doc false
   def format_output(message, context, metadata, opts \\ %{}) do
+    context_str =
+      context
+      |> to_string()
+      |> String.replace(~r/^Elixir\./, "")
+
     formatted_metadata = format_metadata(metadata, opts)
-    base = "[#{context}] #{message}"
+    base = "[#{context_str}] #{message}"
 
     if formatted_metadata != "", do: "#{base} #{formatted_metadata}", else: base
   end
@@ -109,7 +141,15 @@ defmodule ExDbug do
     context_str = to_string(context)
 
     if should_log?(level, metadata, context_str) do
-      formatted = format_output(message, context_str, metadata)
+      debug_opts = Process.get(:ex_dbug_opts, [])
+
+      opts =
+        debug_opts
+        |> Keyword.take([:truncate])
+        |> Keyword.merge(metadata_to_keyword_list(metadata))
+        |> Map.new()
+
+      formatted = format_output(message, context_str, metadata, opts)
 
       case level do
         :debug -> Logger.debug(formatted)
@@ -121,11 +161,38 @@ defmodule ExDbug do
   @doc false
   def log(level, message, metadata, opts) when level in [:debug, :error] and is_map(opts) do
     context = Map.get(opts, :context) || "unknown"
+    metadata = metadata_to_keyword_list(metadata)
     log(level, message, metadata, context)
   end
 
   @doc false
+  defp compute_caller_context(env) do
+    case env.function do
+      nil ->
+        quote do
+          __MODULE__
+          |> Atom.to_string()
+          |> String.replace(~r/^Elixir\./, "")
+        end
+
+      {name, _arity} ->
+        escaped_name = Macro.escape(name)
+
+        quote do
+          module_name =
+            __MODULE__
+            |> Atom.to_string()
+            |> String.replace(~r/^Elixir\./, "")
+
+          function_name = unquote(escaped_name) |> Atom.to_string()
+          "#{module_name}.#{function_name}"
+        end
+    end
+  end
+
+  @doc false
   defp should_log?(level, metadata, context) do
+    metadata = metadata_to_keyword_list(metadata)
     debug_levels = Keyword.get(metadata, :levels, [:debug, :error])
     level_allowed = level in debug_levels
     pattern_match = namespace_enabled?(context)
@@ -191,10 +258,8 @@ defmodule ExDbug do
     Regex.match?(Regex.compile!("^" <> regex_pattern <> "$"), string)
   end
 
-  # Private helper functions for metadata formatting
   defp format_metadata(metadata, opts) when is_list(metadata) do
-    max_length = Map.get(opts, :max_length, 500)
-    truncate_threshold = Map.get(opts, :truncate_threshold, 100)
+    truncate = Map.get(opts, :truncate, 100)
 
     case metadata do
       [] ->
@@ -202,22 +267,42 @@ defmodule ExDbug do
 
       _ ->
         Enum.map_join(metadata, ", ", fn {key, value} ->
-          formatted_value = format_value(value, max_length, truncate_threshold)
+          formatted_value = format_value(value, truncate)
           "#{key}: #{formatted_value}"
         end)
     end
   end
 
+  defp format_metadata(metadata, opts) when is_map(metadata) do
+    format_metadata(Map.to_list(metadata), opts)
+  end
+
   defp format_metadata(_, _), do: ""
 
-  defp format_value(value, max_length, truncate_threshold) do
+  defp format_value(value, truncate) do
     formatted = inspect(value, limit: :infinity, pretty: false)
 
-    if String.length(formatted) > truncate_threshold do
-      truncated = String.slice(formatted, 0, max_length)
-      "#{truncated}... (truncated)"
-    else
-      formatted
+    case truncate do
+      false ->
+        formatted
+
+      true ->
+        if String.length(formatted) > 100 do
+          String.slice(formatted, 0, 100) <> "... (truncated)"
+        else
+          formatted
+        end
+
+      threshold when is_integer(threshold) and threshold > 0 ->
+        if String.length(formatted) > threshold do
+          String.slice(formatted, 0, threshold) <> "... (truncated)"
+        else
+          formatted
+        end
     end
   end
+
+  defp metadata_to_keyword_list(metadata) when is_list(metadata), do: metadata
+  defp metadata_to_keyword_list(metadata) when is_map(metadata), do: Map.to_list(metadata)
+  defp metadata_to_keyword_list(_), do: []
 end
