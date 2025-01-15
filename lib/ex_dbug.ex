@@ -17,75 +17,34 @@ defmodule ExDbug do
         ]
 
   defmacro __using__(opts \\ []) do
-    enabled = get_debug_enabled(opts)
-
-    if enabled do
+    if Keyword.get(opts, :compatibility_mode, false) do
       quote do
-        import ExDbug
-        require Logger
-        require ExDbug
-
-        @debug_opts ExDbug.merge_options(unquote(opts))
-        @context Keyword.get(unquote(opts), :context, __MODULE__) |> to_string()
-
-        Process.put(:ex_dbug_opts, @debug_opts)
-
-        @before_compile ExDbug
+        use ExDbug.Compatibility, unquote(opts)
       end
     else
       quote do
-        require Logger
-        defmacro dbug(_, _ \\ []), do: nil
-        defmacro error(_, _ \\ []), do: nil
-        # def __debug_context__, do: nil
+        use ExDbug.Decorators
+        @ex_dbug_config unquote(opts)
+        def __ex_dbug_config__, do: @ex_dbug_config
       end
-    end
-  end
-
-  defmacro __before_compile__(_env) do
-    quote do
-      def __debug_context__, do: @context
-    end
-  end
-
-  defmacro dbug(message, metadata \\ []) do
-    caller_context = compute_caller_context(__CALLER__)
-
-    quote bind_quoted: [
-            message: message,
-            metadata: metadata,
-            caller_context: caller_context
-          ] do
-      context = __debug_context__() || caller_context
-      ExDbug.log(:debug, message, metadata, context)
-    end
-  end
-
-  defmacro error(message, metadata \\ []) do
-    caller_context = compute_caller_context(__CALLER__)
-
-    quote bind_quoted: [
-            message: message,
-            metadata: metadata,
-            caller_context: caller_context
-          ] do
-      context = __debug_context__() || caller_context
-      ExDbug.log(:error, message, metadata, context)
-    end
-  end
-
-  defmacro track(value, name) do
-    quote do
-      result = unquote(value)
-      dbug("Value tracked: #{unquote(name)} = #{inspect(result)}")
-      result
     end
   end
 
   @doc false
-  def get_debug_enabled(opts) do
+  def enabled?(module, opts \\ []) do
     env_enabled = Application.get_env(:ex_dbug, :enabled, true)
-    Keyword.get(opts, :enabled, env_enabled)
+    module_enabled = get_module_config(module, :enabled, env_enabled)
+    Keyword.get(opts, :enabled, module_enabled)
+  end
+
+  @doc false
+  def get_module_config(module, key, default \\ nil) do
+    try do
+      config = module.__ex_dbug_config__()
+      Keyword.get(config, key, default)
+    rescue
+      _ -> default
+    end
   end
 
   @doc false
@@ -165,32 +124,6 @@ defmodule ExDbug do
     log(level, message, metadata, context)
   end
 
-  @doc false
-  defp compute_caller_context(env) do
-    case env.function do
-      nil ->
-        quote do
-          __MODULE__
-          |> Atom.to_string()
-          |> String.replace(~r/^Elixir\./, "")
-        end
-
-      {name, _arity} ->
-        escaped_name = Macro.escape(name)
-
-        quote do
-          module_name =
-            __MODULE__
-            |> Atom.to_string()
-            |> String.replace(~r/^Elixir\./, "")
-
-          function_name = unquote(escaped_name) |> Atom.to_string()
-          "#{module_name}.#{function_name}"
-        end
-    end
-  end
-
-  @doc false
   defp should_log?(level, metadata, context) do
     metadata = metadata_to_keyword_list(metadata)
     debug_levels = Keyword.get(metadata, :levels, [:debug, :error])
@@ -200,19 +133,16 @@ defmodule ExDbug do
     level_allowed and pattern_match
   end
 
-  @doc false
   defp namespace_enabled?(context) do
     patterns = parse_debug_env()
     matches_namespace?(context, patterns)
   end
 
-  @doc false
   defp parse_debug_env do
     debug_val = System.get_env("DEBUG", "")
     parse_patterns(debug_val)
   end
 
-  @doc false
   defp parse_patterns(string) when is_binary(string) do
     raw = String.split(string, [",", " "], trim: true)
 
@@ -235,7 +165,6 @@ defmodule ExDbug do
     {Enum.reverse(includes), Enum.reverse(excludes)}
   end
 
-  @doc false
   defp matches_namespace?(namespace, {includes, excludes}) do
     cond do
       includes == [] and excludes == [] ->
@@ -248,7 +177,6 @@ defmodule ExDbug do
     end
   end
 
-  @doc false
   defp wildcard_match?(string, pattern) do
     regex_pattern =
       pattern

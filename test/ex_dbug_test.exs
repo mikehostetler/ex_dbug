@@ -1,9 +1,22 @@
 defmodule TestContextModule do
-  # Intentionally not setting context to test auto-detection
-  use ExDbug
+  use ExDbug, compatibility_mode: true
 
   def test_function do
     dbug("Auto context test")
+  end
+end
+
+defmodule TestDecoratorModule do
+  use ExDbug, enabled: true
+
+  @decorate dbug()
+  def simple_function(arg) do
+    arg * 2
+  end
+
+  @decorate dbug(context: :important)
+  def important_function(arg) do
+    arg + 10
   end
 end
 
@@ -11,14 +24,10 @@ defmodule ExDbugTest do
   use ExUnit.Case
   doctest ExDbug
 
-  # We only use ExDbug if :enabled => true in config (default).
-  # If you need to test compile-time disabling, set config or override in test env.
-
   # Import ExDbug for testing
-  use ExDbug, context: :ExDbugTest
-  # @moduletag :capture_log
+  use ExDbug, compatibility_mode: true, context: :ExDbugTest
 
-  describe "basic debugging macros" do
+  describe "compatibility mode" do
     test "dbug macro logs messages" do
       log =
         ExUnit.CaptureLog.capture_log(fn ->
@@ -50,14 +59,35 @@ defmodule ExDbugTest do
     end
   end
 
+  describe "decorator mode" do
+    test "simple function decorator logs and returns value" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          result = TestDecoratorModule.simple_function(5)
+          assert result == 10
+        end)
+
+      assert log =~ "simple_function/1 called"
+      assert log =~ "[TestDecoratorModule]"
+    end
+
+    test "function decorator with context" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          result = TestDecoratorModule.important_function(5)
+          assert result == 15
+        end)
+
+      assert log =~ "important_function/1 called"
+      assert log =~ "[TestDecoratorModule]"
+      assert log =~ "context: :important"
+    end
+  end
+
   describe "configuration and compile-time checks" do
     test "configuration options are applied" do
-      assert ExDbug.get_debug_enabled([]) == true
-
-      options = ExDbug.merge_options([])
-      assert Keyword.get(options, :max_depth) == 3
-      assert Keyword.get(options, :include_timing) == true
-      assert Keyword.get(options, :include_stack) == true
+      assert ExDbug.enabled?(TestDecoratorModule)
+      assert ExDbug.get_module_config(TestDecoratorModule, :enabled) == true
     end
   end
 
@@ -77,7 +107,6 @@ defmodule ExDbugTest do
     end
 
     test "logs message when level is allowed and no DEBUG filtering set" do
-      # means no patterns set
       System.put_env("DEBUG", "")
 
       log =
@@ -98,7 +127,6 @@ defmodule ExDbugTest do
     end
 
     test "logs only included pattern if DEBUG is set" do
-      # Only the 'myapp:*' context is included
       System.put_env("DEBUG", "myapp:*")
 
       log =
@@ -166,17 +194,14 @@ defmodule ExDbugTest do
     end
 
     test "handles custom truncate threshold" do
-      # Make string longer than the custom threshold we'll set
       string = String.duplicate("a", 150)
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          # Set a custom truncate threshold
           dbug("Custom truncate test", value: string, truncate: 50)
         end)
 
       assert log =~ "... (truncated)"
-      # Full string shouldn't appear
       refute log =~ string
     end
 
@@ -224,7 +249,6 @@ defmodule ExDbugTest do
           TestContextModule.test_function()
         end)
 
-      # Changed expectation
       assert log =~ "[TestContextModule]"
       assert log =~ "Auto context test"
     end
@@ -236,7 +260,6 @@ defmodule ExDbugTest do
           dbug(@debug_msg)
         end)
 
-      # Changed expectation
       assert log =~ "[ExDbugTest]"
       assert log =~ @debug_msg
     end

@@ -4,18 +4,20 @@
 [![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/ex_dbug)
 
 Debug utility for Elixir applications, inspired by the Node.js 'debug' package. 
-Provides namespace-based filtering, rich metadata support, and compile-time optimization.
+Version 2.0 introduces decorator-based function tracing while maintaining compatibility with 1.x style debugging.
 
 ## Features
 
-* 🔍 Namespace-based debug output filtering
-* 📊 Rich metadata support with customizable formatting
-* ⚡ Zero runtime cost when disabled (compile-time optimization)
-* 🌍 Environment variable-based filtering
-* 📝 Automatic metadata truncation for large values
-* 🔧 Configurable debug levels and context-based filtering
-* 📈 Value tracking through pipelines
-* ⏱️ Optional timing and stack trace information
+* 🎯 **Decorator-based function tracing** - Zero-cost, compile-time instrumentation
+* 🔄 **1.x Compatibility Mode** - Seamless upgrade path from earlier versions
+* 🔍 **Namespace-based filtering** - Filter debug output by context
+* 📊 **Rich metadata support** - Attach and format detailed debug information
+* ⚡ **Zero runtime cost when disabled** - Compile-time optimization
+* 🌍 **Environment variable-based filtering** - Easy runtime control
+* 📝 **Automatic metadata truncation** - Smart handling of large values
+* 🔧 **Hierarchical configuration** - Global, module, and function-level settings
+* 📈 **Value tracking** - Monitor values through pipelines
+* ⏱️ **Optional timing and stack traces** - Deep insights when needed
 
 ## Installation
 
@@ -24,18 +26,46 @@ Add `ex_dbug` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_dbug, "~> 1.0"}
+    {:ex_dbug, "~> 2.0"}
   ]
 end
 ```
 
-## Basic Usage
+## Usage (2.0 Style)
 
-Add `use ExDbug` to your module and use the `dbug/1,2,3` or `error/1,2,3` macros:
+The new decorator-based approach makes debugging more elegant and maintainable:
 
 ```elixir
 defmodule MyApp.Worker do
-  use ExDbug, context: :worker
+  use ExDbug, enabled: true
+
+  # Simple debug trace
+  @decorate dbug()
+  def process(data) do
+    # Implementation
+  end
+
+  # Configured debug trace
+  @decorate dbug(context: :important)
+  def process_important(data) do
+    # Implementation
+  end
+
+  # Debug all functions in module
+  @decorate_all dbug()
+  
+  def bulk_1(arg), do: arg
+  def bulk_2(arg), do: arg
+end
+```
+
+## Compatibility Mode (1.x Style)
+
+For existing projects or gradual migration, use compatibility mode:
+
+```elixir
+defmodule MyApp.LegacyWorker do
+  use ExDbug, compatibility_mode: true
 
   def process(data) do
     dbug("Processing data", size: byte_size(data))
@@ -53,20 +83,43 @@ In your `config.exs`:
 
 ```elixir
 config :ex_dbug,
-  enabled: true,  # Set to false to compile out all debug calls
-  config: [      # Default options for all ExDbug uses
-    max_length: 500,
-    truncate_threshold: 100,
+  enabled: true,
+  config: [
+    max_depth: 3,
     include_timing: true,
     include_stack: true,
-    max_depth: 3,
+    truncate: 100,
     levels: [:debug, :error]
   ]
 ```
 
+### Module-Level Configuration
+
+```elixir
+use ExDbug,
+  enabled: true,
+  max_depth: 5,
+  include_timing: true,
+  include_stack: false,
+  levels: [:debug, :error]
+```
+
+### Function-Level Configuration (2.0)
+
+```elixir
+@decorate dbug(
+  context: :important,
+  include_timing: true,
+  include_stack: true
+)
+def critical_function(arg) do
+  # Implementation
+end
+```
+
 ### Runtime Configuration
 
-Set the `DEBUG` environment variable to control which namespaces are logged:
+Control debug output using the `DEBUG` environment variable:
 
 ```bash
 # Enable all debug output
@@ -82,90 +135,59 @@ DEBUG="myapp:*,other:thing" mix run
 DEBUG="*,-myapp:secret" mix run
 ```
 
-## Advanced Usage
+## Migrating from 1.x to 2.0
 
-### Metadata Support
+### Option 1: Direct Upgrade (Recommended)
 
-All debug macros accept metadata as keyword lists:
-
+Replace debug calls with decorators:
 ```elixir
-dbug("User login", 
-  user_id: 123,
-  ip: "192.168.1.1",
-  timestamp: DateTime.utc_now()
-)
-```
+# Before (1.x)
+def process(arg) do
+  dbug("Processing", value: arg)
+  # Implementation
+end
 
-Long metadata values are automatically truncated based on configuration:
-```elixir
-# With default config (truncate_threshold: 100, max_length: 500)
-dbug("Big data", data: String.duplicate("x", 1000))
-# Output: [context] Big data data: "xxxxx... (truncated)"
-```
-
-### Value Tracking
-
-Debug values in pipelines without breaking the flow:
-
-```elixir
-def process_payment(amount) do
-  amount
-  |> track("initial_amount")
-  |> apply_fees()
-  |> track("with_fees")
-  |> complete_transaction()
+# After (2.0)
+@decorate dbug()
+def process(arg) do
+  # Implementation
 end
 ```
 
-### Module Configuration
+### Option 2: Compatibility Mode
 
-Configure ExDbug behavior per module:
-
-```elixir
-use ExDbug,
-  context: :payment_processor,
-  max_length: 1000,
-  truncate_threshold: 200,
-  include_timing: true,
-  include_stack: false,
-  levels: [:debug, :error]
-```
-
-### Debug Levels
-
-Control which log levels are enabled:
+For gradual migration, enable compatibility mode:
 
 ```elixir
-# Only show error messages
-use ExDbug,
-  context: :critical_system,
-  levels: [:error]
-
-# Later in code
-error("Critical failure", error: err)  # This shows
-dbug("Processing")                     # This doesn't
+use ExDbug, compatibility_mode: true
+# All 1.x code continues to work
 ```
 
-## Output Format
+### Configuration Updates
 
-Debug messages follow this format:
-```
-[Context] Message key1: value1, key2: value2
-```
+Update your configuration to use the new hierarchical structure:
 
-Examples:
-```
-[payment] Processing payment amount: 100, currency: "USD"
-[worker] Job completed status: :ok, duration_ms: 1500
+```elixir
+# Before (1.x)
+config :ex_dbug, enabled: true
+
+# After (2.0)
+config :ex_dbug,
+  enabled: true,
+  config: [
+    max_depth: 3,
+    include_timing: true
+  ]
 ```
 
 ## Best Practices
 
 1. Use descriptive context names matching your application structure
-2. Include relevant metadata for better debugging context
-3. Set appropriate DEBUG patterns for different environments
-4. Disable in production for zero overhead
-5. Use `track/2` for debugging pipeline transformations
+2. Prefer decorator-based debugging for new code
+3. Use compatibility mode for gradual migration
+4. Set appropriate DEBUG patterns for different environments
+5. Configure hierarchically (global → module → function)
+6. Disable in production for zero overhead
 
 ## Production Use
 

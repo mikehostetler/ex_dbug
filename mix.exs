@@ -1,7 +1,7 @@
 defmodule ExDbug.MixProject do
   use Mix.Project
 
-  @version "1.2.0"
+  @version "2.0.0"
 
   def project do
     [
@@ -51,6 +51,7 @@ defmodule ExDbug.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:decorator, "~> 1.4"},
       # Testing
       {:credo, "~> 1.7"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
