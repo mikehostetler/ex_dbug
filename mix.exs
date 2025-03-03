@@ -1,7 +1,7 @@
 defmodule ExDbug.MixProject do
   use Mix.Project
 
-  @version "1.2.0"
+  @version "2.1.0"
 
   def project do
     [
@@ -52,9 +52,12 @@ defmodule ExDbug.MixProject do
   defp deps do
     [
       # Testing
-      {:credo, "~> 1.7"},
+      {:credo, "~> 1.7", only: [:dev, :test]},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_check, "~> 0.16.0", only: [:dev, :test]},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:git_ops, "~> 2.7", only: [:dev, :test]},
+      {:mix_test_watch, "~> 1.2", only: [:dev, :test]}
     ]
   end
 end
